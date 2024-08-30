@@ -1,129 +1,145 @@
 import * as vscode from 'vscode';
-import { Project, SourceFile } from 'ts-morph';
-import * as _ from 'lodash';
-import * as path from 'path';
+import * as fs from 'fs';
+
+let provider: vscode.Disposable | undefined; // 이전 provider를 추적하기 위한 변수
 
 export function activate(context: vscode.ExtensionContext) {
-	console.log(' !!!INIT!!! ');
-	const project = new Project();
-	let sourceFileCache: { [key: string]: SourceFile } = {};
+	console.log('INIT');
 
-	const updateSourceFile = (jsFilePath: string) => {
-		console.log(sourceFileCache, ' : sourceFileCache');
-		if (sourceFileCache[jsFilePath]) {
-			project.removeSourceFile(sourceFileCache[jsFilePath]);
-			delete sourceFileCache[jsFilePath];
-		}
-		const sourceFile = project.addSourceFileAtPath(jsFilePath);
-		sourceFileCache[jsFilePath] = sourceFile;
-	};
+	// 처음에 HTML 파일에 대한 자동완성 제공자 등록
+	registerCompletionItemProvider(context);
 
-	const provider = vscode.languages.registerCompletionItemProvider(
+	// JavaScript 파일이 변경될 때 자동완성을 갱신하는 이벤트 리스너
+	const textChangeDisposable = vscode.workspace.onDidChangeTextDocument(
+		(event) => {
+			const document = event.document;
+
+			if (document.languageId === 'javascript') {
+				console.log(
+					'JavaScript Document Changed: ',
+					document.uri.fsPath,
+				);
+
+				// 기존 provider 해제
+				if (provider) {
+					provider.dispose();
+				}
+
+				// 새로운 provider 등록
+				registerCompletionItemProvider(context);
+
+				// 자동완성 목록 강제 갱신
+				const activeEditor = vscode.window.activeTextEditor;
+				if (
+					activeEditor &&
+					activeEditor.document.languageId === 'html'
+				) {
+				}
+				// console.log(context.subscriptions, ' :  context.subscriptions');
+				vscode.commands.executeCommand('editor.action.triggerSuggest');
+			}
+		},
+	);
+
+	context.subscriptions.push(textChangeDisposable);
+	console.log('END');
+}
+
+function registerCompletionItemProvider(context: vscode.ExtensionContext) {
+	provider = vscode.languages.registerCompletionItemProvider(
 		'html',
 		{
 			provideCompletionItems(
 				document: vscode.TextDocument,
 				position: vscode.Position,
-			) {
-				const jsFilePath = path.join(
-					path.dirname(document.uri.fsPath),
-					`${path.basename(document.uri.fsPath, '.html')}.js`,
-				);
-
-				if (!sourceFileCache[jsFilePath]) {
-					updateSourceFile(jsFilePath);
+			): vscode.CompletionItem[] | Thenable<vscode.CompletionItem[]> {
+				if (provider) {
+					provider.dispose();
 				}
 
-				const sourceFile = sourceFileCache[jsFilePath];
-				const completions: vscode.CompletionItem[] = [];
+				const jsFilePath = getAssociatedJSFilePath(document.uri.fsPath);
 
-				const lineText = document.lineAt(position.line).text;
-				const beforeCursor = lineText.substring(0, position.character);
-
-				// 자동완성 트리거가 {} 안에서만 동작하도록
-				const openBrace = beforeCursor.lastIndexOf('{');
-				const closeBrace = lineText.indexOf('}', position.character);
-				if (openBrace === -1 || closeBrace === -1) {
-					return undefined;
+				if (!jsFilePath) {
+					return [];
 				}
 
-				const classes = sourceFile.getClasses();
-				classes.forEach((cls) => {
-					cls.getGetAccessors().forEach((getter) => {
-						const item = new vscode.CompletionItem(
-							getter.getName(),
-							vscode.CompletionItemKind.Property,
-						);
-						completions.push(item);
-					});
-
-					cls.getMethods().forEach((method) => {
-						const item = new vscode.CompletionItem(
-							method.getName(),
-							vscode.CompletionItemKind.Method,
-						);
-						completions.push(item);
-					});
-				});
-
-				sourceFile.getVariableDeclarations().forEach((variable) => {
-					const item = new vscode.CompletionItem(
-						variable.getName(),
-						vscode.CompletionItemKind.Variable,
-					);
-					completions.push(item);
-				});
-
-				return completions;
+				// JS 파일의 최신 상태를 읽어와 자동완성 항목 생성
+				const completionItems: vscode.CompletionItem[] =
+					generateCompletionItems(jsFilePath);
+				console.log(completionItems, ' : complete items');
+				return completionItems;
 			},
 		},
-		'{',
+		'', // 트리거 문자로 <를 사용
 	);
 
+	// 새로운 provider를 컨텍스트에 추가하여 관리
 	context.subscriptions.push(provider);
-
-	const jsWatcher = vscode.workspace.createFileSystemWatcher('**/*.js');
-
-	const debouncedUpdate = _.debounce((uri: vscode.Uri) => {
-		console.log(uri, ' : debounce update uri');
-		updateSourceFile(uri.fsPath);
-	}, 300);
-
-	jsWatcher.onDidChange(debouncedUpdate);
-	jsWatcher.onDidCreate(debouncedUpdate);
-	jsWatcher.onDidDelete((uri) => {
-		if (sourceFileCache[uri.fsPath]) {
-			project.removeSourceFile(sourceFileCache[uri.fsPath]);
-			delete sourceFileCache[uri.fsPath];
-		}
-	});
-
-	vscode.workspace.onDidChangeTextDocument((event) => {
-		console.log('Change Event');
-		if (event.document.languageId === 'javascript') {
-			const jsFilePath = event.document.uri.fsPath;
-			updateSourceFile(jsFilePath);
-
-			const htmlFilePath = jsFilePath.replace('.js', '.html');
-			const htmlDoc = vscode.workspace.textDocuments.find(
-				(doc) => doc.fileName === htmlFilePath,
-			);
-			if (htmlDoc) {
-				// HTML 파일을 강제로 열고 다시 닫기 (갱신하기 위해)
-				vscode.window.showTextDocument(htmlDoc.uri).then((editor) => {
-					setTimeout(() => {
-						vscode.commands.executeCommand(
-							'workbench.action.closeActiveEditor',
-						);
-					}, 100); // 적절한 시간 딜레이 후 닫기
-				});
-			}
-		}
-	});
-
-	context.subscriptions.push(jsWatcher);
 }
 
-export function deactivate() {
-	console.log('Deactivating!!');
+function getAssociatedJSFilePath(htmlFilePath: string): string | null {
+	const jsFilePath = htmlFilePath.replace(/\.html$/, '.js');
+	return fs.existsSync(jsFilePath) ? jsFilePath : null;
+}
+
+function generateCompletionItems(jsFilePath: string): vscode.CompletionItem[] {
+	const jsContent = fs.readFileSync(jsFilePath, 'utf-8');
+	return generateCompletionItemsFromContent(jsContent);
+}
+
+function generateCompletionItemsFromContent(
+	jsContent: string,
+): vscode.CompletionItem[] {
+	const jsVariables = extractJSVariables(jsContent);
+	const jsFunctions = extractJSFunctions(jsContent);
+
+	const completionItems: vscode.CompletionItem[] = [];
+
+	jsVariables.forEach((variable) => {
+		const item = new vscode.CompletionItem(
+			variable,
+			vscode.CompletionItemKind.Variable,
+		);
+		completionItems.push(item);
+	});
+
+	jsFunctions.forEach((func) => {
+		const item = new vscode.CompletionItem(
+			func,
+			vscode.CompletionItemKind.Function,
+		);
+		completionItems.push(item);
+	});
+
+	console.log('waht?? >>>> ', completionItems);
+
+	return completionItems;
+}
+
+function extractJSVariables(jsContent: string): string[] {
+	// @track, @api, get, let, const, var, 그리고 단순 변수 선언을 추출
+	const variableRegex =
+		/(?:@track\s+|@api\s+|get\s+)?(?:let|const|var)?\s*(\w+)\s*(?:=|;|\()/g;
+	const variables: string[] = [];
+	let match;
+
+	while ((match = variableRegex.exec(jsContent)) !== null) {
+		console.log('While match >>>>', match);
+		variables.push(match[1]);
+	}
+
+	return variables;
+}
+
+function extractJSFunctions(jsContent: string): string[] {
+	// function 키워드 없이 선언된 함수 이름을 추출
+	const functionRegex = /(?:^|\s)(\w+)\s*\(.*\)\s*\{/g;
+	const functions: string[] = [];
+	let match;
+
+	while ((match = functionRegex.exec(jsContent)) !== null) {
+		functions.push(match[1]);
+	}
+
+	return functions;
 }
