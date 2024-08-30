@@ -70,7 +70,7 @@ function registerCompletionItemProvider(context: vscode.ExtensionContext) {
 				return completionItems;
 			},
 		},
-		'', // 트리거 문자로 <를 사용
+		'',
 	);
 
 	// 새로운 provider를 컨텍스트에 추가하여 관리
