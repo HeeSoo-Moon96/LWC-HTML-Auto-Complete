@@ -42,6 +42,11 @@ function activate(context) {
         const document = event.document;
         if (document.languageId === 'javascript') {
             console.log('JavaScript Document Changed: ', document.uri.fsPath);
+            // 기존 구독 해제
+            context.subscriptions.forEach((subscription) => {
+                subscription.dispose();
+            });
+            context.subscriptions.length = 0;
             // 기존 provider 해제
             if (provider) {
                 provider.dispose();

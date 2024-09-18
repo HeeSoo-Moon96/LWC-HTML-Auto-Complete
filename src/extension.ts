@@ -20,6 +20,12 @@ export function activate(context: vscode.ExtensionContext) {
 					document.uri.fsPath,
 				);
 
+				// 기존 구독 해제
+				context.subscriptions.forEach((subscription) => {
+					subscription.dispose();
+				});
+				context.subscriptions.length = 0;
+
 				// 기존 provider 해제
 				if (provider) {
 					provider.dispose();
@@ -35,8 +41,7 @@ export function activate(context: vscode.ExtensionContext) {
 					activeEditor.document.languageId === 'html'
 				) {
 				}
-				// console.log(context.subscriptions, ' :  context.subscriptions');
-				vscode.commands.executeCommand('editor.action.triggerSuggest');
+				// vscode.commands.executeCommand('editor.action.triggerSuggest');
 			}
 		},
 	);
@@ -70,10 +75,9 @@ function registerCompletionItemProvider(context: vscode.ExtensionContext) {
 				return completionItems;
 			},
 		},
-		'', // 트리거 문자로 <를 사용
+		'{',
 	);
 
-	// 새로운 provider를 컨텍스트에 추가하여 관리
 	context.subscriptions.push(provider);
 }
 
